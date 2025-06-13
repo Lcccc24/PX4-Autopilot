@@ -51,22 +51,36 @@ using namespace time_literals;
 namespace
 {
 // lc add
-// xy平面前后左右分辨率6 共60数据
-// 72位数组 前六十存储前后左右，后十二存储上下
-static constexpr int INTERNAL_MAP_UPDOWN_BLOCK = 12;
-static constexpr int INTERNAL_MAP_INCREMENT_DEG =
-    6;  // cannot be lower than 5 degrees, should divide 360 evenly
-static constexpr int INTERNAL_MAP_USED_BINS = 360 / INTERNAL_MAP_INCREMENT_DEG;
+// v2 三维合并
+static constexpr int INTERNAL_MAP_INCRE_DEG_HOR = 20;
+static constexpr int INTERNAL_MAP_INCRE_DEG_VER = 30;
+static constexpr int INTERNAL_MAP_USED_BINS_HOR = 360 / INTERNAL_MAP_INCRE_DEG_HOR;
+static constexpr int INTERNAL_MAP_USED_BINS_VER = 180 / INTERNAL_MAP_INCRE_DEG_VER;
+
+static float wrap(float f, float min, float max)
+{
+    if (f < min)
+    {
+        return max + (f - min);
+    }
+
+    if (f > max)
+    {
+        return min + (f - max);
+    }
+
+    return f;
+}
 
 static float wrap_360(float f) { return wrap(f, 0.f, 360.f); }
 
 static int wrap_bin(int i)
 {
-    i = i % INTERNAL_MAP_USED_BINS;
+    i = i % INTERNAL_MAP_USED_BINS_HOR;
 
     while (i < 0)
     {
-        i += INTERNAL_MAP_USED_BINS;
+        i += INTERNAL_MAP_USED_BINS_HOR;
     }
 
     return i;
@@ -76,15 +90,20 @@ static int wrap_bin(int i)
 
 CollisionPrevention::CollisionPrevention(ModuleParams *parent) : ModuleParams(parent)
 {
-    static_assert(INTERNAL_MAP_INCREMENT_DEG >= 5,
-                  "INTERNAL_MAP_INCREMENT_DEG needs to be at least 5");
-    static_assert(360 % INTERNAL_MAP_INCREMENT_DEG == 0,
-                  "INTERNAL_MAP_INCREMENT_DEG should divide 360 evenly");
+    static_assert(INTERNAL_MAP_INCRE_DEG_HOR >= 5,
+                  "INTERNAL_MAP_INCRE_DEG_HOR needs to be at least 5");
+    static_assert(360 % INTERNAL_MAP_INCRE_DEG_HOR == 0,
+                  "INTERNAL_MAP_INCRE_DEG_HOR should divide 360 evenly");
+    static_assert(INTERNAL_MAP_INCRE_DEG_VER >= 5,
+                  "INTERNAL_MAP_INCRE_DEG_VER needs to be at least 5");
+    static_assert(360 % INTERNAL_MAP_INCRE_DEG_VER == 0,
+                  "INTERNAL_MAP_INCRE_DEG_VER should divide 360 evenly");
+
 
     // initialize internal obstacle map
     _obstacle_map_body_frame.timestamp = getTime();
     _obstacle_map_body_frame.frame = obstacle_distance_s::MAV_FRAME_BODY_FRD;
-    _obstacle_map_body_frame.increment = INTERNAL_MAP_INCREMENT_DEG;
+    _obstacle_map_body_frame.increment = INTERNAL_MAP_INCRE_DEG_HOR;
     _obstacle_map_body_frame.min_distance = UINT16_MAX;
     _obstacle_map_body_frame.max_distance = 0;
     _obstacle_map_body_frame.angle_offset = 0.f;
@@ -133,63 +152,67 @@ void CollisionPrevention::_addObstacleSensorData(const obstacle_distance_s &obst
     {
         // Obstacle message arrives in local_origin frame (north aligned)
         // corresponding data index (convert to world frame and shift by msg offset)
-        for (int i = 0; i < INTERNAL_MAP_USED_BINS; i++)
-        {
-            float bin_angle_deg =
-                (float)i * INTERNAL_MAP_INCREMENT_DEG + _obstacle_map_body_frame.angle_offset;
-            msg_index =
-                ceil(wrap_360(vehicle_orientation_deg + bin_angle_deg - obstacle.angle_offset) *
-                     increment_factor);
-            // lc add 确保数组不越界
-            msg_index %= INTERNAL_MAP_USED_BINS;
-
-            // add all data points inside to FOV
-            if (obstacle.distances[msg_index] != UINT16_MAX)
+        for (int e = 0; e < INTERNAL_MAP_USED_BINS_VER; e++){
+            for (int z = 0; z < INTERNAL_MAP_USED_BINS_HOR; z++)
             {
-                if (_enterData(i, obstacle.max_distance * 0.01f,
-                               obstacle.distances[msg_index] * 0.01f))
+                float bin_angle_deg = (float)z * INTERNAL_MAP_INCRE_DEG_HOR + _obstacle_map_body_frame.angle_offset;
+                msg_index = floor(wrap_360(vehicle_orientation_deg + bin_angle_deg - obstacle.angle_offset) * increment_factor);
+                // lc add 确保数组不越界
+                //msg_index %= INTERNAL_MAP_USED_BINS_HOR;
+
+                msg_index += e * INTERNAL_MAP_USED_BINS_HOR;
+
+                // add all data points inside to FOV
+                if (obstacle.distances[msg_index] != UINT16_MAX)
                 {
-                    _obstacle_map_body_frame.distances[i] = obstacle.distances[msg_index];
-                    _data_timestamps[i] = _obstacle_map_body_frame.timestamp;
-                    _data_maxranges[i] = obstacle.max_distance;
-                    _data_fov[i] = 1;
+                    if (_enterData(e * INTERNAL_MAP_USED_BINS_HOR + z, obstacle.max_distance * 0.01f,
+                                obstacle.distances[msg_index] * 0.01f))
+                    {
+                        _obstacle_map_body_frame.distances[e * INTERNAL_MAP_USED_BINS_HOR + z] = obstacle.distances[msg_index];
+                        _data_timestamps[e * INTERNAL_MAP_USED_BINS_HOR + z] = _obstacle_map_body_frame.timestamp;
+                        _data_maxranges[e * INTERNAL_MAP_USED_BINS_HOR + z] = obstacle.max_distance;
+                        _data_fov[e * INTERNAL_MAP_USED_BINS_HOR + z] = 1;
+                    }
                 }
             }
         }
 
         // lc add
-        // todo transform to body frame
-        // 前6位为下方数据 后6位为上方数据
-        for (int i = INTERNAL_MAP_USED_BINS; i < INTERNAL_MAP_USED_BINS + INTERNAL_MAP_UPDOWN_BLOCK;
-             i++)
-        {
-            _obstacle_map_body_frame.distances[i] = obstacle.distances[i];
-        }
+        // // todo transform to body frame
+        // // 前6位为下方数据 后6位为上方数据
+        // for (int i = INTERNAL_MAP_USED_BINS; i < INTERNAL_MAP_USED_BINS + INTERNAL_MAP_UPDOWN_BLOCK; i++)
+        // {
+        //     _obstacle_map_body_frame.distances[i] = obstacle.distances[i];
+        // }
     }
     else if (obstacle.frame == obstacle.MAV_FRAME_BODY_FRD)
     {
         // Obstacle message arrives in body frame (front aligned)
         // corresponding data index (shift by msg offset)
-        for (int i = 0; i < INTERNAL_MAP_USED_BINS; i++)
+        for (int e = 0; e < INTERNAL_MAP_USED_BINS_VER; e++)
         {
-            float bin_angle_deg =
-                (float)i * INTERNAL_MAP_INCREMENT_DEG + _obstacle_map_body_frame.angle_offset;
-            msg_index = ceil(wrap_360(bin_angle_deg - obstacle.angle_offset) * increment_factor);
-
-            // add all data points inside to FOV
-            if (obstacle.distances[msg_index] != UINT16_MAX)
+            for (int z = 0; z < INTERNAL_MAP_USED_BINS_HOR; z++)
             {
-                if (_enterData(i, obstacle.max_distance * 0.01f,
-                               obstacle.distances[msg_index] * 0.01f))
+                float bin_angle_deg = (float)z * INTERNAL_MAP_INCRE_DEG_HOR + _obstacle_map_body_frame.angle_offset;
+                msg_index = floor(wrap_360(bin_angle_deg - obstacle.angle_offset) * increment_factor);
+                msg_index += e * INTERNAL_MAP_USED_BINS_HOR;
+
+                // add all data points inside to FOV
+                if (obstacle.distances[msg_index] != UINT16_MAX)
                 {
-                    _obstacle_map_body_frame.distances[i] = obstacle.distances[msg_index];
-                    _data_timestamps[i] = _obstacle_map_body_frame.timestamp;
-                    _data_maxranges[i] = obstacle.max_distance;
-                    _data_fov[i] = 1;
+                    if (_enterData(e * INTERNAL_MAP_USED_BINS_HOR + z, obstacle.max_distance * 0.01f,
+                                obstacle.distances[msg_index] * 0.01f))
+                    {
+                        _obstacle_map_body_frame.distances[e * INTERNAL_MAP_USED_BINS_HOR + z] = obstacle.distances[msg_index];
+                        _data_timestamps[e * INTERNAL_MAP_USED_BINS_HOR + z] = _obstacle_map_body_frame.timestamp;
+                        _data_maxranges[e * INTERNAL_MAP_USED_BINS_HOR + z] = obstacle.max_distance;
+                        _data_fov[e * INTERNAL_MAP_USED_BINS_HOR + z] = 1;
+                    }
                 }
             }
         }
     }
+
     else
     {
         mavlink_log_critical(&_mavlink_log_pub,
@@ -287,6 +310,23 @@ void CollisionPrevention::_updateObstacleMap()
             _addObstacleSensorData(obstacle_distance, Quatf(_sub_vehicle_attitude.get().q));
         }
     }
+        // 调试使用
+    static orb_advert_t dbg_vect_pub = nullptr;
+    struct debug_vect_s dbg_vect{};
+    strncpy(dbg_vect.name, "123", sizeof(dbg_vect.name));
+    dbg_vect.timestamp = hrt_absolute_time();
+    dbg_vect.x = 2;
+    dbg_vect.y = RANGE_STREAM_TIMEOUT_US;
+    dbg_vect.z = _sub_obstacle_distance.update();
+
+    if (dbg_vect_pub == nullptr)
+    {
+        dbg_vect_pub = orb_advertise(ORB_ID(debug_vect), &dbg_vect);
+    }
+    else
+    {
+        orb_publish(ORB_ID(debug_vect), dbg_vect_pub, &dbg_vect);
+    }
 
     // publish fused obtacle distance message with data from offboard obstacle_distance and distance
     // sensor
@@ -310,10 +350,10 @@ void CollisionPrevention::_addDistanceSensorData(distance_sensor_s &distance_sen
         // calculate the field of view boundary bin indices
         int lower_bound =
             (int)floor((sensor_yaw_body_deg - math::degrees(distance_sensor.h_fov / 2.0f)) /
-                       INTERNAL_MAP_INCREMENT_DEG);
+                       INTERNAL_MAP_INCRE_DEG_HOR);
         int upper_bound =
             (int)floor((sensor_yaw_body_deg + math::degrees(distance_sensor.h_fov / 2.0f)) /
-                       INTERNAL_MAP_INCREMENT_DEG);
+                       INTERNAL_MAP_INCRE_DEG_HOR);
 
         // floor values above zero, ceil values below zero
         if (lower_bound < 0)
@@ -359,7 +399,7 @@ void CollisionPrevention::_adaptSetpointDirection(Vector2f &setpoint_dir, int &s
                                                   float vehicle_yaw_angle_rad)
 {
     const float col_prev_d = _param_cp_dist.get();
-    const int guidance_bins = floor(_param_cp_guide_ang.get() / INTERNAL_MAP_INCREMENT_DEG);
+    const int guidance_bins = floor(_param_cp_guide_ang.get() / INTERNAL_MAP_INCRE_DEG_HOR);
     const int sp_index_original = setpoint_index;
     float best_cost = 9999.f;
     int new_sp_index = setpoint_index;
@@ -399,7 +439,7 @@ void CollisionPrevention::_adaptSetpointDirection(Vector2f &setpoint_dir, int &s
     // only change setpoint direction if it was moved to a different bin
     if (new_sp_index != setpoint_index)
     {
-        float angle = math::radians((float)new_sp_index * INTERNAL_MAP_INCREMENT_DEG +
+        float angle = math::radians((float)new_sp_index * INTERNAL_MAP_INCRE_DEG_HOR +
                                     _obstacle_map_body_frame.angle_offset);
         angle = wrap_2pi(vehicle_yaw_angle_rad + angle);
         setpoint_dir = {cosf(angle), sinf(angle)};
@@ -517,8 +557,9 @@ void CollisionPrevention::_ConstrainSetpoint_ZDown(float &setpointz, float stick
     if ((current_time - _obstacle_map_body_frame.timestamp) < RANGE_STREAM_TIMEOUT_US)
     {
         // 遍历指定区域寻找最小障碍物距离
-        for (int i = INTERNAL_MAP_USED_BINS;
-             i < INTERNAL_MAP_USED_BINS + (INTERNAL_MAP_UPDOWN_BLOCK / 2); ++i)
+        //need change
+        for (int i = INTERNAL_MAP_USED_BINS_HOR;
+             i < INTERNAL_MAP_USED_BINS_HOR + (INTERNAL_MAP_USED_BINS_HOR / 2); ++i)
         {
             if (_obstacle_map_body_frame.distances[i] * 0.01f < min_dist)
                 min_dist = _obstacle_map_body_frame.distances[i] * 0.01f;
@@ -577,8 +618,9 @@ void CollisionPrevention::_ConstrainSetpoint_ZUp(float &setpointz, float stick)
         if (stick < 0.0f)
         {
             // 遍历指定区域寻找最小障碍物距离
-            for (int i = INTERNAL_MAP_USED_BINS + (INTERNAL_MAP_UPDOWN_BLOCK / 2);
-                 i < INTERNAL_MAP_USED_BINS + INTERNAL_MAP_UPDOWN_BLOCK; ++i)
+            //need change
+            for (int i = INTERNAL_MAP_USED_BINS_HOR + (INTERNAL_MAP_USED_BINS_HOR / 2);
+                 i < INTERNAL_MAP_USED_BINS_HOR + INTERNAL_MAP_USED_BINS_HOR; ++i)
             {
                 if (_obstacle_map_body_frame.distances[i] * 0.01f < min_dist)
                     min_dist = _obstacle_map_body_frame.distances[i] * 0.01f;
@@ -673,7 +715,7 @@ void CollisionPrevention::_calculateConstrainedSetpoint(Vector2f &setpoint,
             const float sp_angle_with_offset_deg = wrap_360(math::degrees(sp_angle_body_frame) -
                                                             _obstacle_map_body_frame.angle_offset);
             // 设定值索引
-            int sp_index = floor(sp_angle_with_offset_deg / INTERNAL_MAP_INCREMENT_DEG);
+            int sp_index = floor(sp_angle_with_offset_deg / INTERNAL_MAP_INCRE_DEG_HOR);
 
             //_obstacle_map_body_frame.distances[i]注意障碍物信息数组 为机体系下
 
@@ -683,7 +725,8 @@ void CollisionPrevention::_calculateConstrainedSetpoint(Vector2f &setpoint,
 
             // limit speed for safe flight
             // 遍历每一个扇区
-            for (int i = 0; i < INTERNAL_MAP_USED_BINS; i++)
+            //need change
+            for (int i = 0; i < INTERNAL_MAP_USED_BINS_HOR; i++)
             {  // disregard unused bins at the end of the message
 
                 // delete stale values
@@ -702,7 +745,7 @@ void CollisionPrevention::_calculateConstrainedSetpoint(Vector2f &setpoint,
                 const float max_range = _data_maxranges[i] * 0.01f;  // convert to meters
 
                 // 当前循环中的扇区的对应弧度
-                float angle = math::radians((float)i * INTERNAL_MAP_INCREMENT_DEG +
+                float angle = math::radians((float)i * INTERNAL_MAP_INCRE_DEG_HOR +
                                             _obstacle_map_body_frame.angle_offset);
 
                 // convert from body to local frame in the range [0, 2*pi]
@@ -836,22 +879,23 @@ void CollisionPrevention::modifySetpoint(Vector2f &original_setpoint, const floa
                                          const Vector2f &curr_pos, const Vector2f &curr_vel,
                                          float &setpointz)
 {
+    _updateObstacleMap();
     const bool cp_mode = _param_cp_mode.get();
     // calculate movement constraints based on range data
     Vector2f new_setpoint = original_setpoint;
 
     if (!cp_mode)
     {
-        _calculateConstrainedSetpoint(new_setpoint, curr_pos, curr_vel);
-        float sp_zd = setpointz;
-        _ConstrainSetpoint_ZDown(setpointz, sp_zd);
-        float sp_zu = setpointz;
-        _ConstrainSetpoint_ZUp(setpointz, sp_zu);
+        // _calculateConstrainedSetpoint(new_setpoint, curr_pos, curr_vel);
+        // float sp_zd = setpointz;
+        // _ConstrainSetpoint_ZDown(setpointz, sp_zd);
+        // float sp_zu = setpointz;
+        // _ConstrainSetpoint_ZUp(setpointz, sp_zu);
     }
 
     else
     {
-        applyAvoidance(new_setpoint, setpointz);
+        // applyAvoidance(new_setpoint, setpointz);
     }
 
     // warn user if collision prevention starts to interfere
@@ -1171,13 +1215,14 @@ Vector2f CollisionPrevention::_getMinimumForwardDistance(const Vector2f &setpoin
 
     float min_dist = INFINITY;
 
-    for (int i = 0; i < INTERNAL_MAP_USED_BINS; i++)
+    //need change
+    for (int i = 0; i < INTERNAL_MAP_USED_BINS_HOR; i++)
     {
         float raw_dist = _obstacle_map_body_frame.distances[i];
         if (raw_dist <= _obstacle_map_body_frame.min_distance || raw_dist >= UINT16_MAX)
             continue;
 
-        float angle = math::radians((float)i * INTERNAL_MAP_INCREMENT_DEG +
+        float angle = math::radians((float)i * INTERNAL_MAP_INCRE_DEG_HOR +
                                     _obstacle_map_body_frame.angle_offset);
         angle = wrap_2pi(vehicle_yaw_angle_rad + angle);
         float rad_diff = wrap_pi(angle - sp_rad_local);
@@ -1213,8 +1258,9 @@ float CollisionPrevention::_getMinimumVerticalDistance()
     // = _obstacle_map_body_frame.distances[i] * 0.01f;
     // }
     // 遍历指定区域寻找最小障碍物距离 up
-    for (int i = INTERNAL_MAP_USED_BINS + (INTERNAL_MAP_UPDOWN_BLOCK / 2);
-         i < INTERNAL_MAP_USED_BINS + INTERNAL_MAP_UPDOWN_BLOCK; ++i)
+    //need change
+    for (int i = INTERNAL_MAP_USED_BINS_HOR + (INTERNAL_MAP_USED_BINS_HOR / 2);
+         i < INTERNAL_MAP_USED_BINS_HOR + INTERNAL_MAP_USED_BINS_HOR; ++i)
     {
         if (_obstacle_map_body_frame.distances[i] * 0.01f < min_up_dist)
             min_up_dist = _obstacle_map_body_frame.distances[i] * 0.01f;
@@ -1245,14 +1291,15 @@ Vector2f CollisionPrevention::_calculateAvoidanceCommand(bool xyorz)
     const float angle_limit_sp = xyorz ? 90.0f : 180.0f;
 
     // 遍历所有扇区寻找最安全方向
-    for (int i = 0; i < INTERNAL_MAP_USED_BINS; i++)
+    //need change
+    for (int i = 0; i < INTERNAL_MAP_USED_BINS_HOR; i++)
     {
         if (_obstacle_map_body_frame.distances[i] <= _obstacle_map_body_frame.min_distance ||
             _obstacle_map_body_frame.distances[i] >= UINT16_MAX)
             continue;
         // 当前循环中的扇区的对应弧度
 
-        float angle = math::radians((float)i * INTERNAL_MAP_INCREMENT_DEG +
+        float angle = math::radians((float)i * INTERNAL_MAP_INCRE_DEG_HOR +
                                     _obstacle_map_body_frame.angle_offset);
 
         // convert from body to local frame in the range [0, 2*pi]
@@ -1267,9 +1314,10 @@ Vector2f CollisionPrevention::_calculateAvoidanceCommand(bool xyorz)
         float total_dist = 0.f;
 
         // 计算临近扇区的平均距离
+        //need change
         for (int j = -NEIGHBOR_BINS; j <= NEIGHBOR_BINS; ++j)
         {
-            int index = (i + j + INTERNAL_MAP_USED_BINS) % INTERNAL_MAP_USED_BINS;
+            int index = (i + j + INTERNAL_MAP_USED_BINS_HOR) % INTERNAL_MAP_USED_BINS_HOR;
 
             float dist = _obstacle_map_body_frame.distances[index] * 0.01f;
             if (dist > BP_DIS)
