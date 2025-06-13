@@ -283,8 +283,8 @@ void FlightTaskAuto::_prepareLandSetpoints()
 		}
 
 		_stick_acceleration_xy.setVelocityConstraint(max_speed);
-		_stick_acceleration_xy.generateSetpoints(sticks_xy, _yaw, _land_heading, _position,
-				_velocity_setpoint_feedback.xy(), _deltatime);
+		_stick_acceleration_xy.generateSetpoints(sticks_xy, _yaw, _land_heading, _position, _velocity,
+				_velocity_setpoint_feedback, _deltatime, true);
 		_stick_acceleration_xy.getSetpoints(_land_position, _velocity_setpoint, _acceleration_setpoint);
 
 	} else {

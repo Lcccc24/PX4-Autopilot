@@ -44,6 +44,8 @@
 #include <matrix/math.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/takeoff_status.h>
+//lyf add lib
+#include <lib/collision_prevention/CollisionPrevention.hpp>
 
 #include "SlewRate.hpp"
 
@@ -57,8 +59,8 @@ public:
 	void resetPosition(const matrix::Vector2f &position);
 	void resetVelocity(const matrix::Vector2f &velocity);
 	void resetAcceleration(const matrix::Vector2f &acceleration);
-	void generateSetpoints(matrix::Vector2f stick_xy, const float yaw, const float yaw_sp, const matrix::Vector3f &pos,
-			       const matrix::Vector2f &vel_sp_feedback, const float dt);
+	void generateSetpoints(matrix::Vector2f stick_xy, const float yaw, const float yaw_sp, const matrix::Vector3f &pos, const matrix::Vector3f &vel,
+			       const matrix::Vector3f &vel_sp_feedback, const float dt, const bool isAuto);
 	void getSetpoints(matrix::Vector3f &pos_sp, matrix::Vector3f &vel_sp, matrix::Vector3f &acc_sp);
 	float getMaxAcceleration() { return _param_mpc_acc_hor.get(); };
 	float getMaxJerk() { return _param_mpc_jerk_max.get(); };
@@ -91,4 +93,6 @@ private:
 		(ParamFloat<px4::params::MPC_ACC_HOR>) _param_mpc_acc_hor,
 		(ParamFloat<px4::params::MPC_JERK_MAX>) _param_mpc_jerk_max
 	)
+	//lyf add
+	CollisionPrevention _collision_prevention{this}; /**< collision avoidance setpoint amendment */
 };

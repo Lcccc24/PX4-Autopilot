@@ -70,8 +70,8 @@ void StickAccelerationXY::resetAcceleration(const matrix::Vector2f &acceleration
 	}
 }
 
-void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, const float yaw_sp, const Vector3f &pos,
-		const matrix::Vector2f &vel_sp_feedback, const float dt)
+void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, const float yaw_sp, const Vector3f &pos, const Vector3f &vel,
+		const matrix::Vector3f &vel_sp_feedback, const float dt, const bool isAuto)
 {
 	// maximum commanded acceleration and velocity
 	Vector2f acceleration_scale(_param_mpc_acc_hor.get(), _param_mpc_acc_hor.get());
@@ -116,7 +116,14 @@ void StickAccelerationXY::generateSetpoints(Vector2f stick_xy, const float yaw, 
 	// Generate velocity setpoint by forward integrating commanded acceleration
 	_velocity_setpoint += _acceleration_setpoint * dt;
 
-	lockPosition(pos, vel_sp_feedback, dt);
+	// lyf add collision prevention
+	if (_collision_prevention.is_active() && !isAuto) {
+		float zsp = vel_sp_feedback(2);
+		_collision_prevention.modifySetpoint(_velocity_setpoint, velocity_sc, pos.xy(),
+                                             vel.xy(), zsp);
+	}
+	//add finish
+	//lockPosition(pos, vel_sp_feedback.xy(), dt);
 	_acceleration_setpoint_prev = _acceleration_setpoint;
 }
 
