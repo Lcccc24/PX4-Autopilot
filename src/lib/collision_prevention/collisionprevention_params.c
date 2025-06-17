@@ -191,6 +191,20 @@ PARAM_DEFINE_FLOAT(CP_DECEL_DIS, 4.f);
  */
 PARAM_DEFINE_FLOAT(CP_BYPASS_DIS, 2.8f);
 
+
+
+/**
+ * Emergency Distance for Bypass Mode to stop
+ *
+ * Used in Bypass Mode only.
+ *
+ * @min 0
+ * @max 2
+ * @unit m
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(CP_EMERGENCY_DIS, 0.8f);
+
 /**
  * MAX VEL in Bypass effect
  *
@@ -265,3 +279,17 @@ PARAM_DEFINE_FLOAT(CP_HOR_DENSE, 7.5f);
  * @group Multicopter Position Control
  */
 PARAM_DEFINE_FLOAT(CP_VER_GATE, 3.0f);
+
+
+/**
+ * velocity limit
+ *
+ * Used in Bypass Mode only.
+ *
+ * @min 0.0
+ * @max 15.0
+ * @decimal 1
+ * @increment 0.1
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(CP_XYZ_VMAX, 3.0f);

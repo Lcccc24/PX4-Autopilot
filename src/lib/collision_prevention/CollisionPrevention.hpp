@@ -83,10 +83,6 @@ class CollisionPrevention : public ModuleParams
                         const matrix::Vector2f &curr_pos, const matrix::Vector2f &curr_vel,
                         float &z_setpoint);
 
-    // lc add
-    void _ConstrainSetpoint_ZDown(float &z_setpoint, float stick);
-    void _ConstrainSetpoint_ZUp(float &z_setpoint, float stick);
-
    protected:
     obstacle_distance_s _obstacle_map_body_frame{};
     bool _data_fov[sizeof(_obstacle_map_body_frame.distances) /
@@ -154,18 +150,16 @@ class CollisionPrevention : public ModuleParams
     hrt_abstime _time_activated{0};
 
     DEFINE_PARAMETERS(
-        (ParamFloat<px4::params::CP_DIST>)
-            _param_cp_dist, /**< collision prevention keep minimum distance */
-        (ParamFloat<px4::params::CP_DELAY>)
-            _param_cp_delay, /**< delay of the range measurement data*/
-        (ParamFloat<px4::params::CP_GUIDE_ANG>)
-            _param_cp_guide_ang, /**< collision prevention change setpoint angle */
-        (ParamBool<px4::params::CP_GO_NO_DATA>)
-            _param_cp_go_nodata,                            /**< movement allowed where no data*/
+        (ParamFloat<px4::params::CP_DIST>)_param_cp_dist, /**< collision prevention keep minimum distance */
+        (ParamFloat<px4::params::CP_DELAY>)_param_cp_delay, /**< delay of the range measurement data*/
+        (ParamFloat<px4::params::CP_GUIDE_ANG>)_param_cp_guide_ang, /**< collision prevention change setpoint angle */
+        (ParamBool<px4::params::CP_GO_NO_DATA>)_param_cp_go_nodata, /**< movement allowed where no data*/
         (ParamFloat<px4::params::MPC_XY_P>)_param_mpc_xy_p, /**< p gain from position controller*/
         (ParamFloat<px4::params::MPC_JERK_MAX>)_param_mpc_jerk_max, /**< vehicle maximum jerk*/
-        (ParamFloat<px4::params::MPC_ACC_HOR>)
-            _param_mpc_acc_hor, /**< vehicle maximum horizontal acceleration*/
+        (ParamFloat<px4::params::MPC_ACC_HOR>)_param_mpc_acc_hor, /**< vehicle maximum horizontal acceleration*/\
+        (ParamFloat<px4::params::MPC_VEL_MANUAL>)_param_mpc_xy_vmax,
+        (ParamFloat<px4::params::MPC_Z_VEL_MAX_UP>)_param_mpc_zup_vmax,
+        (ParamFloat<px4::params::MPC_Z_VEL_MAX_DN>)_param_mpc_zdn_vmax,
         (ParamBool<px4::params::CP_MODE>)_param_cp_mode, /**< collision prevention mode */
         (ParamFloat<px4::params::CP_DOWN_GATE1>)_param_cp_down_gate1, /**< Brake Mode */
         (ParamFloat<px4::params::CP_DOWN_GATE2>)_param_cp_down_gate2, /**< Brake Mode */
@@ -175,12 +169,14 @@ class CollisionPrevention : public ModuleParams
         (ParamFloat<px4::params::CP_UP_DECAY>)_param_cp_up_decay,     /**< Brake Mode */
         (ParamFloat<px4::params::CP_DECEL_DIS>)_param_cp_decel_dis,   /**< Bypass Mode */
         (ParamFloat<px4::params::CP_BYPASS_DIS>)_param_cp_bypass_dis, /**< Bypass Mode */
+        (ParamFloat<px4::params::CP_EMERGENCY_DIS>)_param_cp_emergency_dis,
         (ParamFloat<px4::params::CP_BYPASS_VEL>)_param_cp_bypass_vel, /**< Bypass Mode */
         (ParamInt<px4::params::CP_NEI_BINS>)_param_cp_nei_bins,       /**< Bypass Mode */
         (ParamFloat<px4::params::CP_ALIGN_GAIN>)_param_cp_align_gain, /**< Bypass Mode */
         (ParamFloat<px4::params::CP_DIS_GAIN>)_param_cp_dis_gain,     /**< Bypass Mode */
         (ParamFloat<px4::params::CP_HOR_DENSE>)_param_cp_hor_dense,   /**< Bypass Mode */
-        (ParamFloat<px4::params::CP_VER_GATE>)_param_cp_ver_gate      /**< Bypass Mode */
+        (ParamFloat<px4::params::CP_VER_GATE>)_param_cp_ver_gate,     /**< Bypass Mode */
+        (ParamFloat<px4::params::CP_XYZ_VMAX>)_param_cp_vel_max       /**< Bypass Mode */
     )
 
     /**
@@ -190,15 +186,6 @@ class CollisionPrevention : public ModuleParams
      */
     float _sensorOrientationToYawOffset(const distance_sensor_s &distance_sensor,
                                         float angle_offset) const;
-
-    /**
-     * Computes collision free setpoints
-     * @param setpoint, setpoint before collision prevention intervention
-     * @param curr_pos, current vehicle position
-     * @param curr_vel, current vehicle velocity
-     */
-    void _calculateConstrainedSetpoint(matrix::Vector2f &setpoint, const matrix::Vector2f &curr_pos,
-                                       const matrix::Vector2f &curr_vel);
 
     /**
      * Publishes collision_constraints message
@@ -224,6 +211,18 @@ class CollisionPrevention : public ModuleParams
      */
     void _publishVehicleCmdDoLoiter();
 
+
+    /**
+     * Computes collision free setpoints
+     * @param setpoint, setpoint before collision prevention intervention
+     * @param curr_pos, current vehicle position
+     * @param curr_vel, current vehicle velocity
+     */
+    // lc add
+    void _ConstrainSetpoint_XY(matrix::Vector2f &setpoint, const matrix::Vector2f &curr_pos, const matrix::Vector2f &curr_vel);
+    void _ConstrainSetpoint_ZDown(float &z_setpoint, float stick);
+    void _ConstrainSetpoint_ZUp(float &z_setpoint, float stick);
+
     // lc add
     // BYPASS MODE
     enum BP_State
@@ -236,22 +235,18 @@ class CollisionPrevention : public ModuleParams
 
     // 参数配置
     BP_State bp_state_ = MANUAL;
-    matrix::Vector2f _original_setpoint_xy;        // 保存的用户原始指令
-    float _original_setpoint_z;                    // 保存的用户原始指令
-    hrt_abstime _recovery_start_xy;                // 恢复阶段开始时间
-    matrix::Vector2f _last_avoidance_cmd;          // 上一次避障指令
+    hrt_abstime _recovery_start;                // 恢复阶段开始时间
+    matrix::Vector3f scaled_setpoint;
+    matrix::Vector3f _last_avoidance_cmd;          // 上一次避障指令
     static constexpr double RECOVERY_TIME = 0.5f;  // 恢复时间 (s)
-    bool BP_XY = false;
-    bool BP_ZUP = false;
+
 
     // 避障核心逻辑
     void applyAvoidance(matrix::Vector2f &setpoint, float &setpointz);
-    matrix::Vector2f _calculateAvoidanceCommand(bool xyorz);
-    // bool _checkCollisionRisk(matrix::Vector2f& setpoint);
-    matrix::Vector2f _getMinimumForwardDistance(const matrix::Vector2f &setpoint);
-    float _getMinimumVerticalDistance();
-    template <typename T>
-    T calculateSlowdown(const T &original, float min_dist) const;
-    matrix::Vector2f _blendCommands(const matrix::Vector2f &user_cmd,
-                                    const matrix::Vector2f &avoid_cmd, float ratio);
+    float _get_TargetDir_MinDist(const matrix::Vector3f &setpoint);
+    matrix::Vector4f _get_Safe_Dir(const matrix::Vector3f &setpoint);
+    matrix::Vector3f calculateSlowdown(const matrix::Vector3f &original, float min_dist) const;
+    matrix::Vector3f _calculateAvoidanceCommand(const matrix::Vector3f &setpoint);
+    matrix::Vector3f _blendCommands(const matrix::Vector3f &user_cmd,
+                                    const matrix::Vector3f &avoid_cmd, float ratio);
 };

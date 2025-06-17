@@ -43,6 +43,7 @@
 #include <lib/airspeed/airspeed.h>
 #include <lib/conversion/rotation.h>
 #include <lib/systemlib/px4_macros.h>
+#include <uORB/topics/debug_vect.h>
 
 #include <math.h>
 #include <poll.h>
